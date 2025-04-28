@@ -1,0 +1,5 @@
+{
+    "thresh": 30,
+    "open_k": 1,
+    "close_k": 17
+}

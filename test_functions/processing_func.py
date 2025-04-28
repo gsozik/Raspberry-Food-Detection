@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 
-def segment_image(frame, background_path='background.png', thresh=30, kernel_size=(5,5)):
 
+def segment_image(frame, background_path='background.png', thresh=30, kernel_size=(5, 5)):
     # 1) Загрузка фона
     background = cv2.imread(background_path)
     if background is None:
@@ -23,7 +23,7 @@ def segment_image(frame, background_path='background.png', thresh=30, kernel_siz
     _, mask = cv2.threshold(diff_uint8, thresh, 255, cv2.THRESH_BINARY)
 
     # 6) Морфологическая очистка (открытие)
-    kernel     = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, kernel_size)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, kernel_size)
     mask_clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
     # 7) Применение маски к кадру
@@ -31,26 +31,6 @@ def segment_image(frame, background_path='background.png', thresh=30, kernel_siz
 
     return mask_clean, segmented
 
+
 if __name__ == "__main__":
-    #  Загрузка снимка, который вы сделали
-    frame = cv2.imread("snapshot.png")
-    if frame is None:
-        print("Не найден файл snapshot.png")
-        exit(1)
-
-    # Сегментация
-    mask, segmented = segment_image(frame,
-                                    background_path="background.png",
-                                    thresh=30,
-                                    kernel_size=(5,5))
-
-    # Сохранение результатов
-    cv2.imwrite("mask.png", mask)
-    cv2.imwrite("segmented.png", segmented)
-    print("Сегментация завершена: mask.png, segmented.png")
-
-    # При желании — показать результат
-    cv2.imshow("Mask", mask)
-    cv2.imshow("Segmented", segmented)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    print('True')
