@@ -2,14 +2,7 @@ import cv2
 import os
 
 def detect_blobs(mask, frame, min_area=500):
-    """
-    Находит блобы на бинарной маске mask и вырезает их из frame.
-    Возвращает список словарей с ключами:
-      - 'contour': контур
-      - 'bbox': (x, y, w, h)
-      - 'area': площадь
-      - 'roi': вырезанный фрагмент изображения
-    """
+
     # Найти контуры на маске
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     blobs = []
