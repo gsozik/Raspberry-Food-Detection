@@ -1,90 +1,131 @@
 import cv2
 import json
 from pathlib import Path
-from frame_func import on_mouse, segment_by_background
-from find_blobs import merge_overlapping_boxes, detect_blobs
+from ultralytics import YOLO
+import frame_func
+import find_blobs
 
+# --- Paths & config ---
+BASE        = Path(__file__).parent
+FRAMES_DIR  = BASE / 'frames'
+CFG_PATH    = BASE / 'seg_config.json'
+BG_PATH     = FRAMES_DIR / 'background.png'
+CLS_WEIGHTS = BASE / 'food41_cls_exp4' / 'weights' / 'best.pt'
 
-def main():
-    BASE = Path(__file__).parent
-    FRAMES_DIR = BASE / 'frames'
-    CONFIG_PATH = BASE / 'seg_config.json'
-    BG_PATH = FRAMES_DIR / 'background.png'
+# ensure frames directory exists
+FRAMES_DIR.mkdir(exist_ok=True)
 
-    FRAMES_DIR.mkdir(exist_ok=True)
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
+# load segmentation params
+cfg = json.loads(CFG_PATH.read_text(encoding='utf-8'))
 
-    bg = cv2.imread(str(BG_PATH))
-    if bg is None:
-        raise FileNotFoundError(f"Фон не найден: {BG_PATH}")
+# load classification model
+cls_model = YOLO(str(CLS_WEIGHTS), task='classify')
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise RuntimeError("Не удалось открыть камеру")
+# load background
+bg = cv2.imread(str(BG_PATH))
+if bg is None:
+    raise FileNotFoundError(f"Не найден фон: {BG_PATH}")
 
-    cv2.namedWindow('Video')
-    state = {'clicked': False}
-    cv2.setMouseCallback('Video', on_mouse, state)
+clicked = False
+def on_mouse(event, x, y, flags, param):
+    global clicked
+    if event == cv2.EVENT_LBUTTONDOWN:
+        clicked = True
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+def merge_overlapping_boxes(bboxes):
+    """
+    Merge any overlapping (x,y,w,h) boxes into combined boxes.
+    """
+    rects = [[x, y, x + w, y + h] for x, y, w, h in bboxes]
+    merged = []
+    while rects:
+        x1, y1, x2, y2 = rects.pop(0)
+        changed = True
+        while changed:
+            changed = False
+            rest = []
+            for xx1, yy1, xx2, yy2 in rects:
+                if not (xx2 < x1 or xx1 > x2 or yy2 < y1 or yy1 > y2):
+                    x1, y1 = min(x1, xx1), min(y1, yy1)
+                    x2, y2 = max(x2, xx2), max(y2, yy2)
+                    changed = True
+                else:
+                    rest.append([xx1, yy1, xx2, yy2])
+            rects = rest
+        merged.append((x1, y1, x2 - x1, y2 - y1))
+    return merged
 
-        cv2.imshow('Video', frame)
+# set up camera window
+cap = cv2.VideoCapture(0)
+cv2.namedWindow('Video')
+cv2.setMouseCallback('Video', on_mouse)
 
-        if state['clicked']:
-            snapshot = frame.copy()
-            (FRAMES_DIR / 'snapshot.png').write_bytes(cv2.imencode('.png', snapshot)[1])
-            print("Snapshot saved.")
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-            # сегментация
-            mask, segmented = segment_by_background(
-                snapshot, bg,
-                thresh=cfg['thresh'],
-                open_k=cfg['open_k'],
-                close_k=cfg['close_k'],
-                merge_contours=False  # теперь не сливаем их в одну оболочку
-            )
-            cv2.imwrite(str(FRAMES_DIR / 'mask.png'), mask)
-            cv2.imwrite(str(FRAMES_DIR / 'segmented.png'), segmented)
+    cv2.imshow('Video', frame)
+    key = cv2.waitKey(1) & 0xFF
 
-            # детект блобов
-            raw_blobs = detect_blobs(
-                mask, snapshot,
-                min_area=cfg['min_area'],
-                min_width=cfg.get('min_width', 20),
-                min_height=cfg.get('min_height', 20)
-            )
+    if clicked:
+        # 1) save snapshot
+        snap = frame.copy()
+        cv2.imwrite(str(FRAMES_DIR / 'snapshot.png'), snap)
 
-            # собираем списки bbox
-            bboxes = [b['bbox'] for b in raw_blobs]
-            # объединяем пересекающиеся
-            merged = merge_overlapping_boxes(bboxes)
+        # 2) segment by background
+        mask, segmented = frame_func.segment_by_background(
+            snap, bg,
+            thresh=cfg['thresh'],
+            open_k=cfg['open_k'],
+            close_k=cfg['close_k'],
+            merge_contours=False
+        )
+        cv2.imwrite(str(FRAMES_DIR / 'mask.png'), mask)
+        cv2.imwrite(str(FRAMES_DIR / 'segmented.png'), segmented)
 
-            # аннотируем
-            annotated = snapshot.copy()
-            for x, y, w, h in merged:
-                cv2.rectangle(annotated, (x, y), (x+w, y+h), (0,255,0), 2)
+        # 3) detect blobs
+        raw = find_blobs.detect_blobs(
+            mask, snap,
+            min_area=cfg['min_area'],
+            min_width=cfg.get('min_width', 20),
+            min_height=cfg.get('min_height', 20)
+        )
+        bboxes = [r['bbox'] for r in raw]
 
-            cv2.imshow('Annotated', annotated)
-            cv2.imwrite(str(FRAMES_DIR / 'annotated_blobs.png'), annotated)
-            print(f"Annotated saved with {len(merged)} boxes.")
+        # 4) merge overlapping boxes
+        merged = merge_overlapping_boxes(bboxes)
 
-            # сохраняем чистые ROI из original
-            for i, (x, y, w, h) in enumerate(merged, start=1):
-                roi = snapshot[y:y+h, x:x+w]
-                cv2.imwrite(str(FRAMES_DIR / f"blob_{i:02d}.png"), roi)
-            print(f"Saved {len(merged)} clean blobs.")
+        # 5) annotate & classify
+        ann = snap.copy()
+        for (x, y, w, h) in merged:
+            cv2.rectangle(ann, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            roi = snap[y:y+h, x:x+w]
+            res = cls_model.predict(source=roi, verbose=False)[0]
+            if hasattr(res, 'probs') and res.probs is not None:
+                cls_idx  = int(res.probs.top1)
+                conf     = float(res.probs.top1conf)
+                cls_name = cls_model.names[cls_idx]
+            else:
+                cls_name, conf = "unknown", 0.0
+            label = f"{cls_name} {conf:.2f}"
+            ty = y - 10 if y > 20 else y + h + 20
+            cv2.putText(ann, label, (x, ty),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-            state['clicked'] = False
+        # show and save annotated
+        cv2.imshow('Annotated', ann)
+        cv2.imwrite(str(FRAMES_DIR / 'annotated.png'), ann)
 
-        if cv2.waitKey(1) & 0xFF == 27:
-            break
+        # 6) save clean blobs
+        for i, (x, y, w, h) in enumerate(merged, start=1):
+            blob = snap[y:y+h, x:x+w]
+            cv2.imwrite(str(FRAMES_DIR / f'blob_{i:02d}.png'), blob)
 
-    cap.release()
-    cv2.destroyAllWindows()
+        clicked = False
 
-if __name__ == '__main__':
-    main()
+    if key == 27:  # ESC
+        break
+
+cap.release()
+cv2.destroyAllWindows()
