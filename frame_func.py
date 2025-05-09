@@ -80,7 +80,5 @@ def segment_by_subtraction(frame, background, diff_thresh, open_k, close_k):
     return mask_clean, segmented
 
 
-def on_mouse(event, x, y, flags, state):
-    if event == cv2.EVENT_LBUTTONDOWN:
-        state['clicked'] = True
+
 
