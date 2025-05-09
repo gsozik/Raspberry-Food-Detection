@@ -1,5 +1,8 @@
 {
-    "thresh": 30,
+    "thresh": 55,
     "open_k": 1,
-    "close_k": 17
+    "close_k": 11,
+    "min_area": 700,
+    "min_width": 100,
+    "min_height": 100
 }

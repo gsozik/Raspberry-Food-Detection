@@ -2,7 +2,66 @@ import cv2
 import numpy as np
 import json
 
+import cv2
+import numpy as np
 
+# ----------------------------------------
+# Функции сегментации с учётом статичного фона
+# ----------------------------------------
+
+import cv2
+import numpy as np
+
+def segment_by_background(frame: np.ndarray,
+                          background: np.ndarray,
+                          thresh: int = 30,
+                          open_k: int = 5,
+                          close_k: int = 5,
+                          merge_contours: bool = True) -> (np.ndarray, np.ndarray):
+    """
+    Сегментация объектов на статичном фоне с заполнением контуров.
+
+    Если merge_contours=True, объединяет все найденные контуры в один
+    выпуклый оболочкой (convex hull), чтобы получить единый объект.
+
+    Возвращает:
+        filled_mask: бинарная маска (0 или 255) с одним сплошным объектом.
+        segmented: цветной кадр, в котором оставлены только объекты.
+    """
+    # 1) Вычитание фона + grayscale
+    diff = cv2.absdiff(frame, background)
+    gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+    # 2) Пороговая бинаризация
+    _, mask = cv2.threshold(gray, thresh, 255, cv2.THRESH_BINARY)
+
+    # 3) Морфологическая обработка
+    open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_k, open_k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel, iterations=1)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel, iterations=2)
+
+    # 4) Поиск контуров
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return mask, frame.copy()
+
+    # 5) Объединяем контуры, если нужно
+    if merge_contours:
+        # собираем все точки из контуров и строим convex hull
+        all_pts = np.vstack(contours)
+        hull = cv2.convexHull(all_pts)
+        final_contours = [hull]
+    else:
+        final_contours = contours
+
+    # 6) Заполняем полученные контуры
+    filled = np.zeros_like(mask)
+    cv2.drawContours(filled, final_contours, -1, 255, thickness=-1)
+
+    # 7) Маскируем исходный кадр
+    segmented = cv2.bitwise_and(frame, frame, mask=filled)
+
+    return filled, segmented
 def segment_by_subtraction(frame, background, diff_thresh, open_k, close_k):
     # 1) Абс. разница
     diff = cv2.absdiff(frame, background)
@@ -21,65 +80,7 @@ def segment_by_subtraction(frame, background, diff_thresh, open_k, close_k):
     return mask_clean, segmented
 
 
-def take_a_frame():
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Не удалось открыть камеру")
-        return
+def on_mouse(event, x, y, flags, state):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        state['clicked'] = True
 
-    cv2.namedWindow("Video")
-
-    def on_mouse(event, x, y, flags, param):
-        # При нажатии левой кнопки сохраняем кадр
-        if event == cv2.EVENT_LBUTTONDOWN:
-            ret, frame = cap.read()
-            if ret:
-                filename = "frames/snapshot.png"
-                cv2.imwrite(filename, frame)
-                print(f"Снимок сохранён: {filename}")
-
-    cv2.setMouseCallback("Video", on_mouse)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Поток камеры завершился")
-            break
-
-        cv2.imshow("Video", frame)
-        # Выход по нажатию 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-def ready_image():
-    with open("seg_config.json", "r") as f:
-        config = json.load(f)
-    take_a_frame()
-    frame = cv2.imread("frames/snapshot.png")
-    back = cv2.imread("frames/background.png")
-    if frame is None:
-        print("Не найден файл snapshot.png")
-        exit(1)
-    if back is None:
-        print("Не найден файл background.png")
-        exit(1)
-
-    mask, segmented = segment_by_subtraction(frame,
-                                             back,
-                                             config['thresh'],
-                                             config['open_k'],
-                                             config['close_k'])
-
-    cv2.imwrite("frames/mask.png", mask)
-    cv2.imwrite("frames/segmented.png", segmented)
-    print("Сегментация завершена: mask.png, segmented.png")
-
-    #    cv2.imshow("Mask", mask)
-    #    cv2.imshow("Segmented", segmented)
-    #    cv2.waitKey(0)
-    #    cv2.destroyAllWindows()
-    return mask, segmented
