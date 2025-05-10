@@ -4,16 +4,17 @@ from pathlib import Path
 from ultralytics import YOLO
 from frame_func import segment_by_background
 from find_blobs import merge_overlapping_boxes, detect_blobs
-
-
+from db_func import get_price
 
 # --- Paths & config ---
-BASE        = Path(__file__).parent
-FRAMES_DIR  = BASE / 'frames'
-CFG_PATH    = BASE / 'seg_config.json'
-BG_PATH     = FRAMES_DIR / 'background.png'
+BASE = Path(__file__).parent
+FRAMES_DIR = BASE / 'frames'
+CFG_PATH = BASE / 'seg_config.json'
+BG_PATH = FRAMES_DIR / 'background.png'
 CLS_WEIGHTS = BASE / 'food41_cls_exp4' / 'weights' / 'best.pt'
-
+DB_PATH = BASE / 'database' / 'menu.db'
+CONF_THRESHOLD = 0.7
+sales = 0
 # ensure frames directory exists
 FRAMES_DIR.mkdir(exist_ok=True)
 
@@ -29,10 +30,13 @@ if bg is None:
     raise FileNotFoundError(f"Не найден фон: {BG_PATH}")
 
 clicked = False
+
+
 def on_mouse(event, x, y, flags, param):
     global clicked
     if event == cv2.EVENT_LBUTTONDOWN:
         clicked = True
+
 
 # set up camera window
 cap = cv2.VideoCapture(0)
@@ -79,17 +83,27 @@ while True:
         ann = snap.copy()
         for (x, y, w, h) in merged:
             cv2.rectangle(ann, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            roi = snap[y:y+h, x:x+w]
+            roi = snap[y:y + h, x:x + w]
             res = cls_model.predict(source=roi, verbose=False)[0]
             if hasattr(res, 'probs') and res.probs is not None:
-                cls_idx  = int(res.probs.top1)
-                conf     = float(res.probs.top1conf)
+                cls_idx = int(res.probs.top1)
+                conf = float(res.probs.top1conf)
                 cls_name = cls_model.names[cls_idx]
-                print(cls_name)
             else:
                 cls_name, conf = "unknown", 0.0
-                print(cls_name)
-            label = f"{cls_name} {conf:.2f}"
+                # если уверенность выше порога — рисуем рамку и подпись
+            if conf >= CONF_THRESHOLD:
+                cv2.rectangle(ann, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                label = f"{cls_name} {conf:.2f}"
+                print(f'{cls_name} - {get_price(cls_name, DB_PATH)} Рублей.')
+                sales += get_price(cls_name, DB_PATH)
+
+            else:
+                # иначе выводим 'unknown' без рамки
+                label = "unknown"
+                print(f'Блюдо не найдено в базе.')
+
+
             ty = y - 10 if y > 20 else y + h + 20
             cv2.putText(ann, label, (x, ty),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
@@ -100,7 +114,7 @@ while True:
 
         # 6) save clean blobs
         for i, (x, y, w, h) in enumerate(merged, start=1):
-            blob = snap[y:y+h, x:x+w]
+            blob = snap[y:y + h, x:x + w]
             cv2.imwrite(str(FRAMES_DIR / f'blob_{i:02d}.png'), blob)
 
         clicked = False
@@ -110,3 +124,4 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+print(sales)

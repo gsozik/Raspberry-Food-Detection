@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import os
 import cv2
-import numpy as np
+
 
 def detect_blobs(mask: np.ndarray,
                  frame: np.ndarray,
@@ -37,12 +37,13 @@ def detect_blobs(mask: np.ndarray,
         if w < min_width or h < min_height:
             continue
         # вырезаем ROI из оригинального кадра
-        roi = frame[y:y+h, x:x+w].copy()
+        roi = frame[y:y + h, x:x + w].copy()
         blobs.append({'bbox': (x, y, w, h), 'roi': roi, 'area': area})
 
     # сортируем по площади (крупные в начале)
     blobs.sort(key=lambda b: b['area'], reverse=True)
     return blobs
+
 
 def merge_overlapping_boxes(bboxes):
     """
@@ -73,5 +74,3 @@ def merge_overlapping_boxes(bboxes):
             rects = new_rects
         merged.append((x1, y1, x2 - x1, y2 - y1))
     return merged
-
-
